@@ -1,0 +1,18 @@
+flags: {}
+extra-package-dbs: []
+packages:
+- '.'
+- location:
+    git: https://github.com/tensorflow/haskell.git
+    commit: 4ab9cb9cf274e88eababfaba85103e3890a96afc
+  subdirs:
+    - tensorflow
+    - tensorflow-ops
+    - tensorflow-core-ops
+    - tensorflow-proto
+    - tensorflow-opgen
+    - tensorflow-test
+  extra-dep: true
+extra-deps:
+- proto-lens-protobuf-types-0.2.1.0 
+resolver: lts-8.20
