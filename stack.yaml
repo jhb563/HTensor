@@ -6,13 +6,23 @@ packages:
     git: https://github.com/tensorflow/haskell.git
     commit: 4ab9cb9cf274e88eababfaba85103e3890a96afc
   subdirs:
-    - tensorflow
-    - tensorflow-ops
-    - tensorflow-core-ops
-    - tensorflow-proto
-    - tensorflow-opgen
-    - tensorflow-test
+  - tensorflow
+  - tensorflow-ops
+  - tensorflow-core-ops
+  - tensorflow-logging
+  - tensorflow-proto
+  - tensorflow-opgen
+  - tensorflow-test
   extra-dep: true
 extra-deps:
-- proto-lens-protobuf-types-0.2.1.0 
+- proto-lens-protobuf-types-0.2.1.0
+- snappy-0.2.0.2
+- snappy-framing-0.1.1
+- tensorflow-logging-0.1.0.0
+- tensorflow-records-0.1.0.0
+- tensorflow-records-conduit-0.1.0.0
+extra-include-dirs:
+- /usr/local/opt/icu4c/include
+extra-lib-dirs:
+- /usr/local/opt/icu4c/lib
 resolver: lts-8.20

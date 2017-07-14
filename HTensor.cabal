@@ -27,7 +27,10 @@ library
                      , tensorflow
                      , tensorflow-ops
                      , tensorflow-core-ops
+                     , tensorflow-logging
+                     , text
                      , vector
+                     , proto-lens
   default-language:    Haskell2010
 
 executable HTensor-exe
