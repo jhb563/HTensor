@@ -6,13 +6,14 @@ module Processing where
 import Data.ByteString.Lazy.Char8 (pack)
 import Data.Csv (FromRecord, decode, HasHeader(..))
 import Data.Int
-import Data.Vector (Vector, length, fromList, (!))
+import Data.Vector (Vector, length, fromList, (!), toList)
+import Data.Word (Word8)
 import GHC.Generics (Generic)
 import System.Random.Shuffle (shuffleM)
 
 import TensorFlow.Core (TensorData, encodeTensorData)
 
-import Constants (irisFeatures, sampleSize)
+import Constants (irisFeatures, sampleSize, mnistFeatures)
 
 data IrisRecord = IrisRecord
   { field1 :: Float
@@ -35,7 +36,7 @@ readIrisFromFile fp = do
     Right records -> return records
 
 -- A function that takes this vector of records, and selects 10 of them at random.
-chooseRandomRecords :: Vector IrisRecord -> IO (Vector IrisRecord)
+chooseRandomRecords :: Vector a -> IO (Vector a)
 chooseRandomRecords records = do
   let numRecords = Data.Vector.length records
   chosenIndices <- take sampleSize <$> shuffleM [0..(numRecords - 1)]
@@ -50,3 +51,15 @@ convertRecordsToTensorData records = (input, output)
     output = encodeTensorData [fromIntegral numRecords] (label <$> records)
     recordToInputs :: IrisRecord -> [Float]
     recordToInputs rec = [field1 rec, field2 rec, field3 rec, field4 rec]
+
+convertDigitRecordsToTensorData
+  :: Vector (Vector Word8, Word8)
+  -> (TensorData Float, TensorData Word8)
+convertDigitRecordsToTensorData records = (input, output)
+  where
+    numRecords = Data.Vector.length records
+    input = encodeTensorData [fromIntegral numRecords, mnistFeatures]
+      (fromList $ concatMap recordToInputs records)
+    output = encodeTensorData [fromIntegral numRecords] (snd <$> records)
+    recordToInputs :: (Vector Word8, Word8) -> [Float]
+    recordToInputs rec = fromIntegral <$> (toList . fst) rec

@@ -13,6 +13,8 @@ packages:
   - tensorflow-proto
   - tensorflow-opgen
   - tensorflow-test
+  - tensorflow-mnist
+  - tensorflow-mnist-input-data
   extra-dep: true
 extra-deps:
 - proto-lens-protobuf-types-0.2.1.0
