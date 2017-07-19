@@ -9,7 +9,7 @@ irisLabels :: Int64
 irisLabels = 3
 
 sampleSize :: Int
-sampleSize = 1000
+sampleSize = 100
 
 mnistFeatures :: Int64
 mnistFeatures = 784
