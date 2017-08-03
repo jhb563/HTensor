@@ -20,6 +20,7 @@ library
                      , Iris
                      , Processing
                      , Digits
+                     , DTensor
   ghc-options:         -Wall -Werror
   build-depends:       base >= 4.7 && < 5
                      , bytestring
@@ -34,6 +35,7 @@ library
                      , text
                      , vector
                      , proto-lens
+                     , singletons
   default-language:    Haskell2010
 
 executable HTensor-exe
