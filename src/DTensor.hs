@@ -7,30 +7,69 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module DTensor where
 
+import Data.Int (Int64)
 import TensorFlow.Core
 import TensorFlow.Ops (add, constant)
 
-import GHC.TypeLits (Nat, KnownNat)
+import Data.Singletons.Prelude
+import GHC.TypeLits
 
-newtype (TensorType a) => DTensor v a (s :: Nat) = DTensor { unTensor :: (Tensor v a) }
+-- newtype (TensorType a) => DTensor v a (s :: Nat) = DTensor { unTensor :: (Tensor v a) }
+
+data DTensor v a s where
+  DTensor :: (TensorType a) => Tensor v a -> DTensor v a s
+  -- DTensorFull :: Tensor v a -> DTensor v a (x ': xs) 
+
+data MyShape (s :: [Nat]) where
+  NilShape :: MyShape '[]
+  (:--) :: Sing m -> MyShape s -> MyShape (m ': s)
 
 dAdd :: (TensorType a, a /= Bool) => DTensor v a s -> DTensor v a s -> DTensor Build a s
 dAdd (DTensor t1) (DTensor t2) = DTensor (t1 `add` t2)
 
-{-type family MatchesShape sh1 sh2 where
-  MatchesShape sh1 sh1 = 'True
-  MatchesShape _ _ = 'False-}
+data Natu = Z | S Natu
 
-type family RightShapeLength sh ln where
-  RightShapeLength x y = 'True
+data SNatu n where
+  SZ :: SNatu 'Z
+  SS :: SNatu n -> SNatu ('S n)
+
+data Vector a n where
+  Nil :: Vector a 'Z
+  (:-) :: a -> Vector a n -> Vector a ('S n)
+infixr :-
+
+fromList :: SNatu n -> [a] -> Maybe (Vector a n)
+fromList SZ _ = Just Nil
+fromList (SS n) (x : xs) = (x :-) <$> fromList n xs
+fromList _ _ = Nothing
+
+{-fromShape :: (l ~ '[]) => SList l -> Shape -> Maybe (MyShape n l)
+fromShape SNil _ = Just NilShape
+fromShape (SCons h ts)  (Shape (a : as)) = (h :--) <$> fromShape ts as
+fromShape _ _ = Nothing-}
+
+fromShape :: Shape -> MyShape s
+fromShape (Shape []) = NilShape
+fromShape (Shape (a : as)) = (sing :: Sing a) :-- fromShape (Shape as)
+
+{-fromShape :: SList l -> MyShape n l
+fromShape SNil = NilShape
+fromShape (SCons h ts) = h :-- fromShape ts-}
+-- Will this even help? Can I get here from Shape? 
+-- What other constraints do I need to add to make this type check and work out?
+
 
 -- We want the shape to be inferred, except it can't necessarily be inferred just from the
 -- list. We need the shape as well.
-dConstant :: (TensorType a, RightShapeLength sh ) => sh -> [a] -> DTensor Build a s
-dConstant shp as = DTensor (constant shp as)
+-- dConstant :: (TensorType a, HasShape s) => s -> [a] -> DTensor Build a (MyShapeFamily s)
+--dConstant shp as = DTensor (constant (getShape shp) as)
+
+-- :: (TensorType a, ShapeMatches x y) => x -> y -> DTensor Build a (ShapeOf x)
 
 -- 1. Can I attach the exact shape that is given as the type list?
 -- 2. Can I then prove that the given shape matches the number of elements in the list?
