@@ -23,6 +23,7 @@ extra-deps:
 - tensorflow-logging-0.1.0.0
 - tensorflow-records-0.1.0.0
 - tensorflow-records-conduit-0.1.0.0
+- grenade-0.1.0
 extra-include-dirs:
 - /usr/local/opt/icu4c/include
 extra-lib-dirs:

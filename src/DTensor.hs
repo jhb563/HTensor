@@ -11,9 +11,9 @@
 module DTensor where
 
 import TensorFlow.Core
-import TensorFlow.Ops (add, constant)
+import TensorFlow.Ops (add)
 
-import GHC.TypeLits (Nat, KnownNat)
+import GHC.TypeLits (Nat)
 
 newtype (TensorType a) => DTensor v a (s :: Nat) = DTensor { unTensor :: (Tensor v a) }
 
@@ -29,8 +29,8 @@ type family RightShapeLength sh ln where
 
 -- We want the shape to be inferred, except it can't necessarily be inferred just from the
 -- list. We need the shape as well.
-dConstant :: (TensorType a, RightShapeLength sh ) => sh -> [a] -> DTensor Build a s
-dConstant shp as = DTensor (constant shp as)
+{- dConstant :: (TensorType a, RightShapeLength sh ) => sh -> [a] -> DTensor Build a s
+dConstant shp as = DTensor (constant shp as)-}
 
 -- 1. Can I attach the exact shape that is given as the type list?
 -- 2. Can I then prove that the given shape matches the number of elements in the list?

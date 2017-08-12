@@ -21,6 +21,7 @@ library
                      , Processing
                      , Digits
                      , DTensor
+                     , IrisGrenade
   ghc-options:         -Wall -Werror
   build-depends:       base >= 4.7 && < 5
                      , bytestring
@@ -36,6 +37,10 @@ library
                      , vector
                      , proto-lens
                      , singletons
+                     , grenade
+                     , hmatrix
+                     , MonadRandom
+                     , mtl
   default-language:    Haskell2010
 
 executable HTensor-exe
