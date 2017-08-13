@@ -53,9 +53,9 @@ fromShape SNil _ = Just NilShape
 fromShape (SCons h ts)  (Shape (a : as)) = (h :--) <$> fromShape ts as
 fromShape _ _ = Nothing-}
 
-fromShape :: Shape -> MyShape s
+{-fromShape :: Shape -> MyShape s
 fromShape (Shape []) = NilShape
-fromShape (Shape (a : as)) = (sing :: Sing a) :-- fromShape (Shape as)
+fromShape (Shape (a : as)) = (sing :: Sing a) :-- fromShape (Shape as)-}
 
 {-fromShape :: SList l -> MyShape n l
 fromShape SNil = NilShape

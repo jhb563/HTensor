@@ -22,6 +22,7 @@ library
                      , Digits
                      , DTensor
                      , SingPractice
+                     , DepShape
   ghc-options:         -Wall
   build-depends:       base >= 4.7 && < 5
                      , bytestring
@@ -37,6 +38,8 @@ library
                      , vector
                      , proto-lens
                      , singletons
+                     , constraints
+                     , vector-sized
   default-language:    Haskell2010
 
 executable HTensor-exe
