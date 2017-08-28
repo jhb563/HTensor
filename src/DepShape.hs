@@ -27,44 +27,44 @@ import           TensorFlow.Session (runSession, run)
 instance Eq Shape where
   (==) (Shape s) (Shape r) = s == r
 
-data MyShape (s :: [Nat]) where
-  NilShape :: MyShape '[]
-  (:--) :: KnownNat m => Proxy m -> MyShape s -> MyShape (m ': s)
+data SafeShape (s :: [Nat]) where
+  NilShape :: SafeShape '[]
+  (:--) :: KnownNat m => Proxy m -> SafeShape s -> SafeShape (m ': s)
 
-data MyTensor v a (s :: [Nat]) where
-  MyTensor :: (TensorType a) => Tensor v a -> MyTensor v a s
+data SafeTensor v a (s :: [Nat]) where
+  SafeTensor :: (TensorType a) => Tensor v a -> SafeTensor v a s
 
 infixr 5 :--
 
-class MkMyShape (s :: [Nat]) where
-  mkMyShape :: MyShape s
-instance MkMyShape '[] where
-  mkMyShape = NilShape
-instance (MkMyShape s, KnownNat m) => MkMyShape (m ': s) where
-  mkMyShape = Proxy :-- mkMyShape
+class MkSafeShape (s :: [Nat]) where
+  mkSafeShape :: SafeShape s
+instance MkSafeShape '[] where
+  mkSafeShape = NilShape
+instance (MkSafeShape s, KnownNat m) => MkSafeShape (m ': s) where
+  mkSafeShape = Proxy :-- mkSafeShape
 
-toShape :: MyShape s -> Shape
+toShape :: SafeShape s -> Shape
 toShape NilShape = Shape []
 toShape ((pm :: Proxy m) :-- s) = Shape (fromInteger (natVal pm) : s')
   where
     (Shape s') = toShape s
 
-fromShape :: forall s. MkMyShape s => Shape -> Maybe (MyShape s)
+fromShape :: forall s. MkSafeShape s => Shape -> Maybe (SafeShape s)
 fromShape shape = if toShape myShape == shape
   then Just myShape
   else Nothing
   where
-    myShape = mkMyShape :: MyShape s
+    myShape = mkSafeShape :: SafeShape s
 
-dConstant :: (TensorType a, ShapeProduct s ~ n) => Vector n a -> MyShape s -> MyTensor Build a s
-dConstant elems shp = MyTensor $ constant (toShape shp) (toList elems)
+safeConstant :: (TensorType a, ShapeProduct s ~ n) => Vector n a -> SafeShape s -> SafeTensor Build a s
+safeConstant elems shp = SafeTensor $ constant (toShape shp) (toList elems)
 
-dAdd :: (TensorType a, a /= Bool) => MyTensor Build a s -> MyTensor Build a s -> MyTensor Build a s
-dAdd (MyTensor t1) (MyTensor t2) = MyTensor (t1 `add` t2)
+dAdd :: (TensorType a, a /= Bool) => SafeTensor Build a s -> SafeTensor Build a s -> SafeTensor Build a s
+dAdd (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `add` t2)
 
 dMatMul :: (TensorType a, a /= Bool, a /= Int8, a /= Int16, a /= Int64, a /= Word8, a /= ByteString)
-   => MyTensor Build a '[i,n] -> MyTensor Build a '[n,o] -> MyTensor Build a '[i,o]
-dMatMul (MyTensor t1) (MyTensor t2) = MyTensor (t1 `matMul` t2)
+   => SafeTensor Build a '[i,n] -> SafeTensor Build a '[n,o] -> SafeTensor Build a '[i,o]
+dMatMul (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `matMul` t2)
 
 type family ShapeProduct (s :: [Nat]) :: Nat
 type instance ShapeProduct '[] = 1
@@ -72,21 +72,28 @@ type instance ShapeProduct (m ': s) = m * ShapeProduct s
 
 main :: IO (VN.Vector Int64)
 main = runSession $ do
-  let (shape1 :: MyShape '[2,2]) = fromJust $ fromShape (Shape [2,2])
+  let (shape1 :: SafeShape '[2,2]) = fromJust $ fromShape (Shape [2,2])
   let (elems1 :: Vector 4 Int64) = fromJust $ fromList [1,2,3,4]
-  let (elems2 :: Vector 4 Int64) = fromJust $ fromList [5,6,7,8]
-  let (constant1 :: MyTensor Build Int64 '[2,2]) = dConstant elems1 shape1
-  let (constant2 :: MyTensor Build Int64 '[2,2]) = dConstant elems2 shape1
-  let (MyTensor additionNode) = constant1 `dAdd` constant2 
-  run additionNode
+  -- let (elems2 :: Vector 4 Int64) = fromJust $ fromList [5,6,7,8]
+  let (constant1 :: SafeTensor Build Int64 '[2,2]) = safeConstant elems1 shape1
+  -- let (constant2 :: SafeTensor Build Int64 '[2,2]) = safeConstant elems2 shape1
+  -- let (SafeTensor additionNode) = constant1 `dAdd` constant2 
+  -- run additionNode
+  let (SafeTensor t) = constant1
+  run t
 
 main2 :: IO (VN.Vector Float)
 main2 = runSession $ do
-  let (shape1 :: MyShape '[4,3]) = fromJust $ fromShape (Shape [4,3])
-  let (shape2 :: MyShape '[3,2]) = fromJust $ fromShape (Shape [3,2])
+  let (shape1 :: SafeShape '[4,3]) = fromJust $ fromShape (Shape [4,3])
+  let (shape2 :: SafeShape '[3,2]) = fromJust $ fromShape (Shape [3,2])
+  let (shape3 :: SafeShape '[4,2]) = fromJust $ fromShape (Shape [4,2])
   let (elems1 :: Vector 12 Float) = fromJust $ fromList [1,2,3,4,1,2,3,4,1,2,3,4]
   let (elems2 :: Vector 6 Float) = fromJust $ fromList [5,6,7,8,9,10]
-  let (constant1 :: MyTensor Build Float '[4,3]) = dConstant elems1 shape1
-  let (constant2 :: MyTensor Build Float '[3,2]) = dConstant elems2 shape2
-  let (MyTensor multNode) = constant1 `dMatMul` constant2
-  run multNode
+  let (elems3 :: Vector 8 Float) = fromJust $ fromList [11,12,13,14,15,16,17,18]
+  let (constant1 :: SafeTensor Build Float '[4,3]) = safeConstant elems1 shape1
+  let (constant2 :: SafeTensor Build Float '[3,2]) = safeConstant elems2 shape2
+  let (constant3 :: SafeTensor Build Float '[4,2]) = safeConstant elems3 shape3
+  let (multTensor :: SafeTensor Build Float '[4,3]) = constant1 `dMatMul` constant2
+  let (addTensor :: SafeTensor Build Float '[4,2]) = multTensor `dAdd` constant3
+  let (SafeTensor finalTensor) = addTensor
+  run finalTensor
