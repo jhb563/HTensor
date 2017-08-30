@@ -12,6 +12,7 @@ module DepShape where
 import           Data.ByteString (ByteString)
 import           Data.Constraint (Constraint)
 import           Data.Int (Int64, Int8, Int16)
+import qualified Data.Map as M
 import           Data.Maybe (fromJust)
 import           Data.Proxy (Proxy(..))
 import           Data.Type.List (Union)
@@ -25,6 +26,7 @@ import           TensorFlow.Core
 import           TensorFlow.Core (Shape(..), TensorType, Tensor, Build)
 import           TensorFlow.Ops (constant, add, matMul, placeholder)
 import           TensorFlow.Session (runSession, run)
+import           TensorFlow.Tensor (TensorKind)
 
 instance Eq Shape where
   (==) (Shape s) (Shape r) = s == r
@@ -34,10 +36,10 @@ data SafeShape (s :: [Nat]) where
   (:--) :: KnownNat m => Proxy m -> SafeShape s -> SafeShape (m ': s)
 
 data SafeTensor v a (s :: [Nat]) (p :: [(Symbol, [Nat])]) where
-  SafeTensor :: (TensorType a) => Tensor v a -> SafeTensor v a s p
+  SafeTensor :: (TensorType a) => Tensor v a -> M.Map String (Tensor v a) -> SafeTensor v a s p
 
-data SafeTensorData a (l :: Symbol) (s :: [Nat]) where
-  SafeTensorData :: (TensorType a) => TensorData a -> SafeTensorData a l s
+data SafeTensorData a (n :: Symbol) (s :: [Nat]) where
+  SafeTensorData :: (TensorType a) => TensorData a -> SafeTensorData a n s
 
 infixr 5 :--
 
@@ -52,6 +54,11 @@ type family ShapeProduct (s :: [Nat]) :: Nat
 type instance ShapeProduct '[] = 1
 type instance ShapeProduct (m ': s) = m * ShapeProduct s
 
+type family MatchesPlaceholders (plm :: [(Symbol, [Nat])]) :: *
+type instance MatchesPlaceholders '[] = ()
+type instance MatchesPlaceholders '[(sym1, shp1)] = SafeTensorData Int64 sym1 shp1
+type instance MatchesPlaceholders ((sym1, shp1) ': restPls) = '(SafeTensorData Int64 sym1 shp1, MatchesPlaceholders restPls)
+
 toShape :: SafeShape s -> Shape
 toShape NilShape = Shape []
 toShape ((pm :: Proxy m) :-- s) = Shape (fromInteger (natVal pm) : s')
@@ -65,32 +72,38 @@ fromShape shape = if toShape myShape == shape
   where
     myShape = mkSafeShape :: SafeShape s
 
-dConstant :: (TensorType a, ShapeProduct s ~ n) => Vector n a -> SafeShape s -> SafeTensor Build a s '[]
-dConstant elems shp = SafeTensor $ constant (toShape shp) (toList elems)
+safeConstant :: (TensorType a, ShapeProduct s ~ n) => Vector n a -> SafeShape s -> SafeTensor Build a s '[]
+safeConstant elems shp = SafeTensor (constant (toShape shp) (toList elems)) M.empty
 
-dPlaceholder :: (MonadBuild m, TensorType a, KnownSymbol sym) => SafeShape s -> m (SafeTensor Value a s '[ '(sym, s)])
-dPlaceholder shp = do
+safePlaceholder :: (MonadBuild m, TensorType a, KnownSymbol sym) => proxy sym -> SafeShape s -> m (SafeTensor Value a s '[ '(sym, s)])
+safePlaceholder ps shp = do
   pl <- placeholder (toShape shp)
-  return $ SafeTensor pl
+  return $ SafeTensor pl (M.fromList [(symbolVal ps, pl)])
 
-dAdd :: (TensorType a, a /= Bool)
+safeAdd :: (TensorType a, a /= Bool, TensorKind v)
   => SafeTensor v a s p1
   -> SafeTensor v a s p2
   -> SafeTensor Build a s (Union p1 p2)
-dAdd (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `add` t2)
+safeAdd (SafeTensor t1 m1) (SafeTensor t2 m2) = SafeTensor (t1 `add` t2) (m1_ `M.union` m2_)
+  where
+    m1_ = M.map expr m1
+    m2_ = M.map expr m2
 
-dMatMul :: (TensorType a, a /= Bool, a /= Int8, a /= Int16, a /= Int64, a /= Word8, a /= ByteString)
-   => SafeTensor Build a '[i,n] p -> SafeTensor Build a '[n,o] p -> SafeTensor Build a '[i,o] p
-dMatMul (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `matMul` t2)
+safeMatMul :: (TensorType a, a /= Bool, a /= Int8, a /= Int16, a /= Int64, a /= Word8, a /= ByteString, TensorKind v)
+   => SafeTensor v a '[i,n] p1 -> SafeTensor v a '[n,o] p2 -> SafeTensor Build a '[i,o] (Union p1 p2)
+safeMatMul (SafeTensor t1 m1) (SafeTensor t2 m2) = SafeTensor (t1 `matMul` t2) (m1_ `M.union` m2_)
+  where
+    m1_ = M.map expr m1
+    m2_ = M.map expr m2
 
 main :: IO (VN.Vector Int64)
 main = runSession $ do
   let (shape1 :: SafeShape '[2,2]) = fromJust $ fromShape (Shape [2,2])
   let (elems1 :: Vector 4 Int64) = fromJust $ fromList [1,2,3,4]
   let (elems2 :: Vector 4 Int64) = fromJust $ fromList [5,6,7,8]
-  let (constant1 :: SafeTensor Build Int64 '[2,2] '[]) = dConstant elems1 shape1
-  let (constant2 :: SafeTensor Build Int64 '[2,2] '[]) = dConstant elems2 shape1
-  let (SafeTensor additionNode) = constant1 `dAdd` constant2 
+  let (constant1 :: SafeTensor Build Int64 '[2,2] '[]) = safeConstant elems1 shape1
+  let (constant2 :: SafeTensor Build Int64 '[2,2] '[]) = safeConstant elems2 shape1
+  let (SafeTensor additionNode _) = constant1 `safeAdd` constant2 
   run additionNode
 
 main2 :: IO (VN.Vector Float)
@@ -99,17 +112,17 @@ main2 = runSession $ do
   let (shape2 :: SafeShape '[3,2]) = fromJust $ fromShape (Shape [3,2])
   let (elems1 :: Vector 12 Float) = fromJust $ fromList [1,2,3,4,1,2,3,4,1,2,3,4]
   let (elems2 :: Vector 6 Float) = fromJust $ fromList [5,6,7,8,9,10]
-  let (constant1 :: SafeTensor Build Float '[4,3] '[]) = dConstant elems1 shape1
-  let (constant2 :: SafeTensor Build Float '[3,2] '[]) = dConstant elems2 shape2
-  let (SafeTensor multNode) = constant1 `dMatMul` constant2
+  let (constant1 :: SafeTensor Build Float '[4,3] '[]) = safeConstant elems1 shape1
+  let (constant2 :: SafeTensor Build Float '[3,2] '[]) = safeConstant elems2 shape2
+  let (SafeTensor multNode _) = constant1 `safeMatMul` constant2
   run multNode
 
 main3 :: IO Float
 main3 = runSession $ do
   let (shape1 :: SafeShape '[2,2]) = fromJust $ fromShape (Shape [2,2])
-  (a :: SafeTensor Value Float '[2,2] '[ '("a", '[2,2])]) <- dPlaceholder shape1
-  (b :: SafeTensor Value Float '[2,2] '[ '("b", '[2,2])]) <- dPlaceholder shape1
-  let result = a `dAdd` b
+  (a :: SafeTensor Value Float '[2,2] '[ '("a", '[2,2])]) <- safePlaceholder (Proxy :: Proxy "a") shape1
+  (b :: SafeTensor Value Float '[2,2] '[ '("b", '[2,2])]) <- safePlaceholder (Proxy :: Proxy "b") shape1
+  let result = a `safeAdd` b
   runWithPlaceholders undefined result
 
 dEncodeTensorData :: (TensorType a, TensorDataType [] a, ShapeProduct s ~ n, KnownSymbol l)
@@ -127,5 +140,5 @@ dEncodeTensorData shp elems = SafeTensorData (encodeTensorData (toShape shp) (to
 dRun :: (TensorType a) => SafeTensor Build a s '[] -> Session a
 dRun = runWithPlaceholders ()
 
-runWithPlaceholders :: (TensorType a) => p -> SafeTensor Build a s pl -> Session a
-runWithPlaceholders = undefined
+safeRun :: (TensorType a) => p -> SafeTensor Build a s pl -> Session a
+safeRun = undefined
