@@ -36,12 +36,24 @@ data SafeShape (s :: [Nat]) where
   (:--) :: KnownNat m => Proxy m -> SafeShape s -> SafeShape (m ': s)
 
 data SafeTensor v a (s :: [Nat]) (p :: [(Symbol, [Nat])]) where
-  SafeTensor :: (TensorType a) => Tensor v a -> M.Map String (Tensor v a) -> SafeTensor v a s p
+  SafeTensor :: (TensorType a) => Tensor v a -> SafeTensor v a s p
 
 data SafeTensorData a (n :: Symbol) (s :: [Nat]) where
   SafeTensorData :: (TensorType a) => TensorData a -> SafeTensorData a n s
 
+data SafeFeed where
+  SafeFeed :: SafeTensor v a s p -> SafeTensorData a n s -> SafeFeed
+
+data FeedList (ss :: [Symbol]) where
+  EmptyFeedList :: FeedList '[]
+  (:--:) :: (KnownSymbol n) => (SafeTensor v a s p, SafeTensorData a n s) -> FeedList ss -> FeedList (n ': ss)
+
 infixr 5 :--
+infixr 5 :--:
+
+type family PlaceholderNames (pl :: [(Symbol, [Nat])]) :: [Symbol]
+type instance PlaceholderNames '[] = '[]
+type instance PlaceholderNames ((n, _) ': rs) = n ': (PlaceholderNames rs)
 
 class MkSafeShape (s :: [Nat]) where
   mkSafeShape :: SafeShape s
@@ -53,11 +65,6 @@ instance (MkSafeShape s, KnownNat m) => MkSafeShape (m ': s) where
 type family ShapeProduct (s :: [Nat]) :: Nat
 type instance ShapeProduct '[] = 1
 type instance ShapeProduct (m ': s) = m * ShapeProduct s
-
-type family MatchesPlaceholders (plm :: [(Symbol, [Nat])]) :: *
-type instance MatchesPlaceholders '[] = ()
-type instance MatchesPlaceholders '[(sym1, shp1)] = SafeTensorData Int64 sym1 shp1
-type instance MatchesPlaceholders ((sym1, shp1) ': restPls) = '(SafeTensorData Int64 sym1 shp1, MatchesPlaceholders restPls)
 
 toShape :: SafeShape s -> Shape
 toShape NilShape = Shape []
@@ -73,28 +80,22 @@ fromShape shape = if toShape myShape == shape
     myShape = mkSafeShape :: SafeShape s
 
 safeConstant :: (TensorType a, ShapeProduct s ~ n) => Vector n a -> SafeShape s -> SafeTensor Build a s '[]
-safeConstant elems shp = SafeTensor (constant (toShape shp) (toList elems)) M.empty
+safeConstant elems shp = SafeTensor (constant (toShape shp) (toList elems))
 
-safePlaceholder :: (MonadBuild m, TensorType a, KnownSymbol sym) => proxy sym -> SafeShape s -> m (SafeTensor Value a s '[ '(sym, s)])
-safePlaceholder ps shp = do
+safePlaceholder :: (MonadBuild m, TensorType a, KnownSymbol sym) => SafeShape s -> m (SafeTensor Value a s '[ '(sym, s)])
+safePlaceholder shp = do
   pl <- placeholder (toShape shp)
-  return $ SafeTensor pl (M.fromList [(symbolVal ps, pl)])
+  return $ SafeTensor pl
 
 safeAdd :: (TensorType a, a /= Bool, TensorKind v)
   => SafeTensor v a s p1
   -> SafeTensor v a s p2
   -> SafeTensor Build a s (Union p1 p2)
-safeAdd (SafeTensor t1 m1) (SafeTensor t2 m2) = SafeTensor (t1 `add` t2) (m1_ `M.union` m2_)
-  where
-    m1_ = M.map expr m1
-    m2_ = M.map expr m2
+safeAdd (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `add` t2)
 
 safeMatMul :: (TensorType a, a /= Bool, a /= Int8, a /= Int16, a /= Int64, a /= Word8, a /= ByteString, TensorKind v)
    => SafeTensor v a '[i,n] p1 -> SafeTensor v a '[n,o] p2 -> SafeTensor Build a '[i,o] (Union p1 p2)
-safeMatMul (SafeTensor t1 m1) (SafeTensor t2 m2) = SafeTensor (t1 `matMul` t2) (m1_ `M.union` m2_)
-  where
-    m1_ = M.map expr m1
-    m2_ = M.map expr m2
+safeMatMul (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `matMul` t2)
 
 main :: IO (VN.Vector Int64)
 main = runSession $ do
@@ -103,7 +104,7 @@ main = runSession $ do
   let (elems2 :: Vector 4 Int64) = fromJust $ fromList [5,6,7,8]
   let (constant1 :: SafeTensor Build Int64 '[2,2] '[]) = safeConstant elems1 shape1
   let (constant2 :: SafeTensor Build Int64 '[2,2] '[]) = safeConstant elems2 shape1
-  let (SafeTensor additionNode _) = constant1 `safeAdd` constant2 
+  let (SafeTensor additionNode) = constant1 `safeAdd` constant2 
   run additionNode
 
 main2 :: IO (VN.Vector Float)
@@ -114,16 +115,16 @@ main2 = runSession $ do
   let (elems2 :: Vector 6 Float) = fromJust $ fromList [5,6,7,8,9,10]
   let (constant1 :: SafeTensor Build Float '[4,3] '[]) = safeConstant elems1 shape1
   let (constant2 :: SafeTensor Build Float '[3,2] '[]) = safeConstant elems2 shape2
-  let (SafeTensor multNode _) = constant1 `safeMatMul` constant2
+  let (SafeTensor multNode) = constant1 `safeMatMul` constant2
   run multNode
 
 main3 :: IO Float
 main3 = runSession $ do
   let (shape1 :: SafeShape '[2,2]) = fromJust $ fromShape (Shape [2,2])
-  (a :: SafeTensor Value Float '[2,2] '[ '("a", '[2,2])]) <- safePlaceholder (Proxy :: Proxy "a") shape1
-  (b :: SafeTensor Value Float '[2,2] '[ '("b", '[2,2])]) <- safePlaceholder (Proxy :: Proxy "b") shape1
+  (a :: SafeTensor Value Float '[2,2] '[ '("a", '[2,2])]) <- safePlaceholder shape1
+  (b :: SafeTensor Value Float '[2,2] '[ '("b", '[2,2])]) <- safePlaceholder shape1
   let result = a `safeAdd` b
-  runWithPlaceholders undefined result
+  safeRun undefined result
 
 dEncodeTensorData :: (TensorType a, TensorDataType [] a, ShapeProduct s ~ n, KnownSymbol l)
    => SafeShape s -> Vector n a -> SafeTensorData a l s
@@ -138,7 +139,8 @@ dEncodeTensorData shp elems = SafeTensorData (encodeTensorData (toShape shp) (to
 --   t3 = The resulting tensor
 
 dRun :: (TensorType a) => SafeTensor Build a s '[] -> Session a
-dRun = runWithPlaceholders ()
+dRun = safeRun EmptyFeedList
 
-safeRun :: (TensorType a) => p -> SafeTensor Build a s pl -> Session a
+safeRun :: (TensorType a, symbols ~ PlaceholderNames placeholders) => 
+  FeedList symbols -> SafeTensor Build a s placeholders -> Session a
 safeRun = undefined
