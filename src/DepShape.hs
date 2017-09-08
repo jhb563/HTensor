@@ -10,14 +10,12 @@
 module DepShape where
 
 import           Data.ByteString (ByteString)
-import           Data.Constraint (Constraint)
 import           Data.Int (Int64, Int8, Int16)
-import qualified Data.Map as M
 import           Data.Maybe (fromJust)
 import           Data.Proxy (Proxy(..))
 import           Data.Type.List (Union)
 import qualified Data.Vector as VN
-import           Data.Vector.Sized (Vector(..), toList, fromList)
+import           Data.Vector.Sized (Vector, toList, fromList)
 import           Data.Word (Word8)
 import           GHC.TypeLits (Nat, KnownNat, natVal)
 import           GHC.TypeLits
@@ -35,7 +33,7 @@ data SafeShape (s :: [Nat]) where
   NilShape :: SafeShape '[]
   (:--) :: KnownNat m => Proxy m -> SafeShape s -> SafeShape (m ': s)
 
-data SafeTensor v a (s :: [Nat]) (p :: [(Symbol, [Nat])]) where
+data SafeTensor v a (s :: [Nat]) (p :: [Symbol]) where
   SafeTensor :: (TensorType a) => Tensor v a -> SafeTensor v a s p
 
 data SafeTensorData a (n :: Symbol) (s :: [Nat]) where
@@ -46,14 +44,10 @@ data SafeFeed where
 
 data FeedList (ss :: [Symbol]) where
   EmptyFeedList :: FeedList '[]
-  (:--:) :: (KnownSymbol n) => (SafeTensor v a s p, SafeTensorData a n s) -> FeedList ss -> FeedList (n ': ss)
+  (:--:) :: (KnownSymbol n) => (SafeTensor Value a s p, SafeTensorData a n s) -> FeedList ss -> FeedList (n ': ss)
 
 infixr 5 :--
 infixr 5 :--:
-
-type family PlaceholderNames (pl :: [(Symbol, [Nat])]) :: [Symbol]
-type instance PlaceholderNames '[] = '[]
-type instance PlaceholderNames ((n, _) ': rs) = n ': (PlaceholderNames rs)
 
 class MkSafeShape (s :: [Nat]) where
   mkSafeShape :: SafeShape s
@@ -82,7 +76,7 @@ fromShape shape = if toShape myShape == shape
 safeConstant :: (TensorType a, ShapeProduct s ~ n) => Vector n a -> SafeShape s -> SafeTensor Build a s '[]
 safeConstant elems shp = SafeTensor (constant (toShape shp) (toList elems))
 
-safePlaceholder :: (MonadBuild m, TensorType a, KnownSymbol sym) => SafeShape s -> m (SafeTensor Value a s '[ '(sym, s)])
+safePlaceholder :: (MonadBuild m, TensorType a, KnownSymbol sym) => SafeShape s -> m (SafeTensor Value a s '[sym])
 safePlaceholder shp = do
   pl <- placeholder (toShape shp)
   return $ SafeTensor pl
@@ -115,20 +109,26 @@ main2 = runSession $ do
   let (elems2 :: Vector 6 Float) = fromJust $ fromList [5,6,7,8,9,10]
   let (constant1 :: SafeTensor Build Float '[4,3] '[]) = safeConstant elems1 shape1
   let (constant2 :: SafeTensor Build Float '[3,2] '[]) = safeConstant elems2 shape2
-  let (SafeTensor multNode) = constant1 `safeMatMul` constant2
-  run multNode
+  let multNode = constant1 `safeMatMul` constant2
+  safeRun_ multNode
 
-main3 :: IO Float
+main3 :: IO (VN.Vector Float)
 main3 = runSession $ do
   let (shape1 :: SafeShape '[2,2]) = fromJust $ fromShape (Shape [2,2])
-  (a :: SafeTensor Value Float '[2,2] '[ '("a", '[2,2])]) <- safePlaceholder shape1
-  (b :: SafeTensor Value Float '[2,2] '[ '("b", '[2,2])]) <- safePlaceholder shape1
+  (a :: SafeTensor Value Float '[2,2] '["a"]) <- safePlaceholder shape1
+  (b :: SafeTensor Value Float '[2,2] '["b"] ) <- safePlaceholder shape1
   let result = a `safeAdd` b
-  safeRun undefined result
+  (result_ :: SafeTensor Value Float '[2,2] '["b", "a"]) <- safeRender result
+  let (feedA :: Vector 4 Float) = fromJust $ fromList [1,2,3,4]
+  let (feedB :: Vector 4 Float) = fromJust $ fromList [5,6,7,8]
+  let fullFeedList = (b, safeEncodeTensorData shape1 feedB) :--:
+                     (a, safeEncodeTensorData shape1 feedA) :--:
+                     EmptyFeedList
+  safeRun fullFeedList result_
 
-dEncodeTensorData :: (TensorType a, TensorDataType [] a, ShapeProduct s ~ n, KnownSymbol l)
+safeEncodeTensorData :: (TensorType a, TensorDataType VN.Vector a, ShapeProduct s ~ n, KnownSymbol l)
    => SafeShape s -> Vector n a -> SafeTensorData a l s
-dEncodeTensorData shp elems = SafeTensorData (encodeTensorData (toShape shp) (toList elems))
+safeEncodeTensorData shp elems = SafeTensorData (encodeTensorData (toShape shp) (VN.fromList (toList elems)))
 
 -- Goal:
 --
@@ -138,9 +138,18 @@ dEncodeTensorData shp elems = SafeTensorData (encodeTensorData (toShape shp) (to
 --        nodes that will actually get attached.
 --   t3 = The resulting tensor
 
-dRun :: (TensorType a) => SafeTensor Build a s '[] -> Session a
-dRun = safeRun EmptyFeedList
+safeRender :: (MonadBuild m) => SafeTensor Build a s pl -> m (SafeTensor Value a s pl)
+safeRender (SafeTensor t1) = do
+  t2 <- render t1
+  return $ SafeTensor t2
 
-safeRun :: (TensorType a, symbols ~ PlaceholderNames placeholders) => 
-  FeedList symbols -> SafeTensor Build a s placeholders -> Session a
-safeRun = undefined
+safeRun_ :: (TensorType a, Fetchable (Tensor v a) r) => SafeTensor v a s '[] -> Session r
+safeRun_ = safeRun EmptyFeedList
+
+safeRun :: (TensorType a, Fetchable (Tensor v a) r) =>
+  FeedList ss -> SafeTensor v a s ss -> Session r
+safeRun feeds (SafeTensor finalTensor) = runWithFeeds (buildFeedList feeds []) finalTensor
+  where
+    buildFeedList :: FeedList ss -> [Feed] -> [Feed]
+    buildFeedList EmptyFeedList accum = accum
+    buildFeedList ((SafeTensor tensor_, SafeTensorData data_) :--: rest) accum = buildFeedList rest ((feed tensor_ data_) : accum)
