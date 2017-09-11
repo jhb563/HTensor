@@ -9,12 +9,11 @@
 module DepShape where
 
 import           Data.ByteString (ByteString)
-import           Data.Constraint (Constraint)
 import           Data.Int (Int64, Int8, Int16)
 import           Data.Maybe (fromJust)
 import           Data.Proxy (Proxy(..))
 import qualified Data.Vector as VN
-import           Data.Vector.Sized (Vector(..), toList, fromList)
+import           Data.Vector.Sized (Vector, toList, fromList)
 import           Data.Word (Word8)
 import           GHC.TypeLits (Nat, KnownNat, natVal)
 import           GHC.TypeLits
@@ -59,12 +58,12 @@ fromShape shape = if toShape myShape == shape
 safeConstant :: (TensorType a, ShapeProduct s ~ n) => Vector n a -> SafeShape s -> SafeTensor Build a s
 safeConstant elems shp = SafeTensor $ constant (toShape shp) (toList elems)
 
-dAdd :: (TensorType a, a /= Bool) => SafeTensor Build a s -> SafeTensor Build a s -> SafeTensor Build a s
-dAdd (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `add` t2)
+safeAdd :: (TensorType a, a /= Bool) => SafeTensor Build a s -> SafeTensor Build a s -> SafeTensor Build a s
+safeAdd (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `add` t2)
 
-dMatMul :: (TensorType a, a /= Bool, a /= Int8, a /= Int16, a /= Int64, a /= Word8, a /= ByteString)
+safeMatMul :: (TensorType a, a /= Bool, a /= Int8, a /= Int16, a /= Int64, a /= Word8, a /= ByteString)
    => SafeTensor Build a '[i,n] -> SafeTensor Build a '[n,o] -> SafeTensor Build a '[i,o]
-dMatMul (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `matMul` t2)
+safeMatMul (SafeTensor t1) (SafeTensor t2) = SafeTensor (t1 `matMul` t2)
 
 type family ShapeProduct (s :: [Nat]) :: Nat
 type instance ShapeProduct '[] = 1
@@ -74,11 +73,7 @@ main :: IO (VN.Vector Int64)
 main = runSession $ do
   let (shape1 :: SafeShape '[2,2]) = fromJust $ fromShape (Shape [2,2])
   let (elems1 :: Vector 4 Int64) = fromJust $ fromList [1,2,3,4]
-  -- let (elems2 :: Vector 4 Int64) = fromJust $ fromList [5,6,7,8]
   let (constant1 :: SafeTensor Build Int64 '[2,2]) = safeConstant elems1 shape1
-  -- let (constant2 :: SafeTensor Build Int64 '[2,2]) = safeConstant elems2 shape1
-  -- let (SafeTensor additionNode) = constant1 `dAdd` constant2 
-  -- run additionNode
   let (SafeTensor t) = constant1
   run t
 
@@ -93,7 +88,7 @@ main2 = runSession $ do
   let (constant1 :: SafeTensor Build Float '[4,3]) = safeConstant elems1 shape1
   let (constant2 :: SafeTensor Build Float '[3,2]) = safeConstant elems2 shape2
   let (constant3 :: SafeTensor Build Float '[4,2]) = safeConstant elems3 shape3
-  let (multTensor :: SafeTensor Build Float '[4,3]) = constant1 `dMatMul` constant2
-  let (addTensor :: SafeTensor Build Float '[4,2]) = multTensor `dAdd` constant3
+  let (multTensor :: SafeTensor Build Float '[4,2]) = constant1 `safeMatMul` constant2
+  let (addTensor :: SafeTensor Build Float '[4,2]) = multTensor `safeAdd` constant3
   let (SafeTensor finalTensor) = addTensor
   run finalTensor
