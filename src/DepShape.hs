@@ -33,7 +33,7 @@ data SafeShape (s :: [Nat]) where
   NilShape :: SafeShape '[]
   (:--) :: KnownNat m => Proxy m -> SafeShape s -> SafeShape (m ': s)
 
-data SafeTensor v a (s :: [Nat]) (p :: [Symbol]) where
+data SafeTensor v a (s :: [Nat]) (p :: [(Symbol, [Nat])]) where
   SafeTensor :: (TensorType a) => Tensor v a -> SafeTensor v a s p
 
 data SafeTensorData a (n :: Symbol) (s :: [Nat]) where
@@ -42,9 +42,9 @@ data SafeTensorData a (n :: Symbol) (s :: [Nat]) where
 data SafeFeed where
   SafeFeed :: SafeTensor v a s p -> SafeTensorData a n s -> SafeFeed
 
-data FeedList (ss :: [Symbol]) where
+data FeedList (pl :: [(Symbol, [Nat])]) where
   EmptyFeedList :: FeedList '[]
-  (:--:) :: (KnownSymbol n) => (SafeTensor Value a s p, SafeTensorData a n s) -> FeedList ss -> FeedList (n ': ss)
+  (:--:) :: (KnownSymbol n) => (SafeTensor Value a s p, SafeTensorData a n s) -> FeedList pl -> FeedList ( '(n, s) ': pl)
 
 infixr 5 :--
 infixr 5 :--:
@@ -73,10 +73,12 @@ fromShape shape = if toShape myShape == shape
   where
     myShape = mkSafeShape :: SafeShape s
 
-safeConstant :: (TensorType a, ShapeProduct s ~ n) => Vector n a -> SafeShape s -> SafeTensor Build a s '[]
+safeConstant :: (TensorType a, ShapeProduct s ~ n) => 
+  Vector n a -> SafeShape s -> SafeTensor Build a s '[]
 safeConstant elems shp = SafeTensor (constant (toShape shp) (toList elems))
 
-safePlaceholder :: (MonadBuild m, TensorType a, KnownSymbol sym) => SafeShape s -> m (SafeTensor Value a s '[sym])
+safePlaceholder :: (MonadBuild m, TensorType a, KnownSymbol sym) => 
+  SafeShape s -> m (SafeTensor Value a s '[ '(sym, s)])
 safePlaceholder shp = do
   pl <- placeholder (toShape shp)
   return $ SafeTensor pl
@@ -115,10 +117,10 @@ main2 = runSession $ do
 main3 :: IO (VN.Vector Float)
 main3 = runSession $ do
   let (shape1 :: SafeShape '[2,2]) = fromJust $ fromShape (Shape [2,2])
-  (a :: SafeTensor Value Float '[2,2] '["a"]) <- safePlaceholder shape1
-  (b :: SafeTensor Value Float '[2,2] '["b"] ) <- safePlaceholder shape1
+  (a :: SafeTensor Value Float '[2,2] '[ '("a", '[2,2])]) <- safePlaceholder shape1
+  (b :: SafeTensor Value Float '[2,2] '[ '("b", '[2,2])] ) <- safePlaceholder shape1
   let result = a `safeAdd` b
-  (result_ :: SafeTensor Value Float '[2,2] '["b", "a"]) <- safeRender result
+  (result_ :: SafeTensor Value Float '[2,2] '[ '("b", '[2,2]), '("a", '[2,2])]) <- safeRender result
   let (feedA :: Vector 4 Float) = fromJust $ fromList [1,2,3,4]
   let (feedB :: Vector 4 Float) = fromJust $ fromList [5,6,7,8]
   let fullFeedList = (b, safeEncodeTensorData shape1 feedB) :--:
@@ -147,7 +149,7 @@ safeRun_ :: (TensorType a, Fetchable (Tensor v a) r) => SafeTensor v a s '[] -> 
 safeRun_ = safeRun EmptyFeedList
 
 safeRun :: (TensorType a, Fetchable (Tensor v a) r) =>
-  FeedList ss -> SafeTensor v a s ss -> Session r
+  FeedList pl -> SafeTensor v a s pl -> Session r
 safeRun feeds (SafeTensor finalTensor) = runWithFeeds (buildFeedList feeds []) finalTensor
   where
     buildFeedList :: FeedList ss -> [Feed] -> [Feed]
