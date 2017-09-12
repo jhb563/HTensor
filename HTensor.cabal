@@ -20,8 +20,6 @@ library
                      , Iris
                      , Processing
                      , Digits
-                     , DTensor
-                     , SingPractice
                      , DepShape
   ghc-options:         -Wall
   build-depends:       base >= 4.7 && < 5
