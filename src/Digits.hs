@@ -1,19 +1,21 @@
 {-# LANGUAGE OverloadedLists     #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings   #-}
 
 module Digits where
 
+import Data.List (genericLength)
 import Control.Lens ((.~))
 import Control.Monad (forM_, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.Int (Int64, Int32)
 import Data.Text (Text)
-import Data.Vector (fromList)
+import Data.Vector as V (fromList)
 import Data.Word (Word8)
 
 import TensorFlow.Core (Build, render, runWithFeeds, feed, unScalar, build,
-                        Tensor, withNameScope, TensorData, opAttr)
+                        Tensor, withNameScope, TensorData, opAttr, encodeTensorData)
 import TensorFlow.Logging (withEventWriter, logGraph, logSummary, scalarSummary,
                            mergeAllSummaries, SummaryTensor)
 import TensorFlow.Minimize (minimizeWith, adam)
@@ -27,7 +29,8 @@ import TensorFlow.Examples.MNIST.Parse (readMNISTSamples, readMNISTLabels)
 import TensorFlow.GenOps.Core (conv2D', maxPool')
 
 import Constants (mnistFeatures, mnistLabels)
-import Processing (convertDigitRecordsToTensorData, chooseRandomRecords)
+
+import Processing (convertDigitRecordsToTensorData)
 
 patchSize :: Int64
 patchSize = 5
@@ -140,21 +143,30 @@ runDigits trainImageFile trainLabelFile testImageFile testLabelFile =
     -- traininglabels, testLabels :: [Word8]
     trainingLabels <- liftIO $ readMNISTLabels trainLabelFile
     testLabels <- liftIO $ readMNISTLabels testLabelFile
-    -- trainingRecords, testRecords :: Vector (Vector Word8, Word8)
-    let trainingRecords = fromList $ zip trainingImages trainingLabels
+    -- testRecords :: Vector (Vector Word8, Word8)
     let testRecords = fromList $ zip testImages testLabels
 
     model <- build createModel
     logGraph eventWriter createModel
     summaryTensor <- build mergeAllSummaries
-    
+
+    -- Functions for generating batches.
+    let encodeImageBatch xs =
+            encodeTensorData [genericLength xs, 784::Int64]
+                                (fromIntegral <$> mconcat xs)
+    let encodeLabelBatch xs =
+            encodeTensorData [genericLength xs]
+                                (fromIntegral <$> V.fromList xs)
+    let batchSize = 100
+    let selectBatch i xs = take batchSize $ drop (i * batchSize) (cycle xs)
+
     -- Training
-    forM_ ([0..20000] :: [Int]) $ \i -> do
-      trainingSample <- liftIO $ chooseRandomRecords trainingRecords
-      let (trainingInputs, trainingOutputs) = convertDigitRecordsToTensorData trainingSample
-      (train model) trainingInputs trainingOutputs
-      when (i `mod` 1000 == 0) $ do
-        (err, summaryBytes) <- (errorRate model) trainingInputs trainingOutputs summaryTensor
+    forM_ ([0..1000] :: [Int]) $ \i -> do
+      let images = encodeImageBatch (selectBatch i trainingImages)
+          labels = encodeLabelBatch (selectBatch i trainingLabels)
+      (train model) images labels
+      when (i `mod` 100 == 0) $ do
+        (err, summaryBytes) <- (errorRate model) images labels summaryTensor
         let summary = decodeMessageOrDie summaryBytes
         liftIO $ putStrLn $ "Current training error " ++ show (err * 100)
         logSummary eventWriter (fromIntegral i) summary
